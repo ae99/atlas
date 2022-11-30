@@ -25,8 +25,8 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.utils.checkpoint import checkpoint
 
-from transformers.activations import ACT2FN
-from transformers.file_utils import (
+from ...activations import ACT2FN
+from ...file_utils import (
     DUMMY_INPUTS,
     DUMMY_MASK,
     add_start_docstrings,
@@ -34,16 +34,16 @@ from transformers.file_utils import (
     is_torch_fx_proxy,
     replace_return_docstrings,
 )
-from transformers.modeling_outputs import (
+from ...modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
 )
-from transformers.modeling_utils import PreTrainedModel, find_pruneable_heads_and_indices, prune_linear_layer
-from transformers.utils import logging
-from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
-from transformers.models.t5.configuration_t5 import T5Config
+from ...modeling_utils import PreTrainedModel, find_pruneable_heads_and_indices, prune_linear_layer
+from ...utils import logging
+from ...utils.model_parallel_utils import assert_device_map, get_device_map
+from .configuration_t5 import T5Config
 
 
 logger = logging.get_logger(__name__)
@@ -216,19 +216,17 @@ PARALLELIZE_DOCSTRING = r"""
 DEPARALLELIZE_DOCSTRING = r"""
     Moves the model to cpu from a model parallel state.
 
-    Example:
+    Example::
 
-    ```python
-    # On a 4 GPU machine with t5-3b:
-    model = T5ForConditionalGeneration.from_pretrained('t5-3b')
-    device_map = {0: [0, 1, 2],
+        # On a 4 GPU machine with t5-3b:
+        model = T5ForConditionalGeneration.from_pretrained('t5-3b')
+        device_map = {0: [0, 1, 2],
 
-                 1: [3, 4, 5, 6, 7, 8, 9],
-                 2: [10, 11, 12, 13, 14, 15, 16],
-                 3: [17, 18, 19, 20, 21, 22, 23]}
-    model.parallelize(device_map) # Splits the model across several devices
-    model.deparallelize() # Put the model back on cpu and cleans memory by calling torch.cuda.empty_cache()
-    ```
+                     1: [3, 4, 5, 6, 7, 8, 9],
+                     2: [10, 11, 12, 13, 14, 15, 16],
+                     3: [17, 18, 19, 20, 21, 22, 23]}
+        model.parallelize(device_map) # Splits the model across several devices
+        model.deparallelize() # Put the model back on cpu and cleans memory by calling torch.cuda.empty_cache()
 """
 
 
@@ -265,7 +263,6 @@ class T5DenseReluDense(nn.Module):
         hidden_states = nn.functional.relu(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.wo(hidden_states)
-        # hidden_states = torch.clamp(hidden_states, -1000, 1000)
         return hidden_states
 
 
@@ -279,13 +276,11 @@ class T5DenseGatedGeluDense(nn.Module):
         self.gelu_act = ACT2FN["gelu_new"]
 
     def forward(self, hidden_states):
-        hidden_gelu = self.wi_0(hidden_states)
-        hidden_gelu = self.gelu_act(hidden_gelu.float()).type_as(hidden_states)
+        hidden_gelu = self.gelu_act(self.wi_0(hidden_states))
         hidden_linear = self.wi_1(hidden_states)
         hidden_states = hidden_gelu * hidden_linear
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.wo(hidden_states)
-        # hidden_states = torch.clamp(hidden_states, -1000, 1000)
         return hidden_states
 
 
@@ -338,7 +333,9 @@ class T5Attention(nn.Module):
     def prune_heads(self, heads):
         if len(heads) == 0:
             return
-        heads, index = find_pruneable_heads_and_indices(heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads)
+        heads, index = find_pruneable_heads_and_indices(
+            heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads
+        )
         # Prune linear layers
         self.q = prune_linear_layer(self.q, index)
         self.k = prune_linear_layer(self.k, index)
@@ -402,9 +399,9 @@ class T5Attention(nn.Module):
         context_position = torch.arange(
             query_length, dtype=torch.long, device=self.relative_attention_bias.weight.device
         )[:, None]
-        memory_position = torch.arange(key_length, dtype=torch.long, device=self.relative_attention_bias.weight.device)[
-            None, :
-        ]
+        memory_position = torch.arange(
+            key_length, dtype=torch.long, device=self.relative_attention_bias.weight.device
+        )[None, :]
         relative_position = memory_position - context_position  # shape (query_length, key_length)
         relative_position_bucket = self._relative_position_bucket(
             relative_position,  # shape (query_length, key_length)
@@ -655,9 +652,7 @@ class T5Block(nn.Module):
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
         # clamp inf values to enable fp16 training
-        # if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-        if torch.isinf(hidden_states).any():
-            print("a")
+        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -684,9 +679,7 @@ class T5Block(nn.Module):
             hidden_states = cross_attention_outputs[0]
 
             # clamp inf values to enable fp16 training
-            # if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-            if torch.isinf(hidden_states).any():
-                print("b")
+            if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
                 clamp_value = torch.finfo(hidden_states.dtype).max - 1000
                 hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -701,9 +694,7 @@ class T5Block(nn.Module):
         hidden_states = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
-        # if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-        if torch.isinf(hidden_states).any():
-            print(f"c {torch.linalg.norm(hidden_states).item()}")
+        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -776,8 +767,8 @@ class T5PreTrainedModel(PreTrainedModel):
             key_value_proj_dim = self.config.d_kv
             n_heads = self.config.num_heads
             module.q.weight.data.normal_(mean=0.0, std=factor * ((d_model * key_value_proj_dim) ** -0.5))
-            module.k.weight.data.normal_(mean=0.0, std=factor * (d_model**-0.5))
-            module.v.weight.data.normal_(mean=0.0, std=factor * (d_model**-0.5))
+            module.k.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
+            module.v.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
             module.o.weight.data.normal_(mean=0.0, std=factor * ((n_heads * key_value_proj_dim) ** -0.5))
             if module.has_relative_attention_bias:
                 module.relative_attention_bias.weight.data.normal_(mean=0.0, std=factor * ((d_model) ** -0.5))
@@ -1348,21 +1339,20 @@ class T5Model(T5PreTrainedModel):
         r"""
         Returns:
 
-        Example:
+        Example::
 
-        ```python
-        >>> from transformers import T5Tokenizer, T5Model
+            >>> from transformers import T5Tokenizer, T5Model
 
-        >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        >>> model = T5Model.from_pretrained('t5-small')
+            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
+            >>> model = T5Model.from_pretrained('t5-small')
 
-        >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
-        >>> decoder_input_ids = tokenizer("Studies show that", return_tensors="pt").input_ids  # Batch size 1
+            >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
+            >>> decoder_input_ids = tokenizer("Studies show that", return_tensors="pt").input_ids  # Batch size 1
 
-        >>> # forward pass
-        >>> outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
-        >>> last_hidden_states = outputs.last_hidden_state
-        ```"""
+            >>> # forward pass
+            >>> outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
+            >>> last_hidden_states = outputs.last_hidden_state
+        """
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1391,7 +1381,6 @@ class T5Model(T5PreTrainedModel):
             )
 
         hidden_states = encoder_outputs[0]
-
         if self.model_parallel:
             torch.cuda.set_device(self.decoder.first_device)
         # Set device for model parallelism
@@ -1642,7 +1631,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         if self.config.tie_word_embeddings:
             # Rescale output before projecting on vocab
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
-            sequence_output = sequence_output * (self.model_dim**-0.5)
+            sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
 
@@ -1678,7 +1667,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         cross_attn_head_mask=None,
         use_cache=None,
         encoder_outputs=None,
-        **kwargs,
+        **kwargs
     ):
 
         # cut decoder_input_ids if past is used
@@ -1801,16 +1790,15 @@ class T5EncoderModel(T5PreTrainedModel):
         r"""
         Returns:
 
-        Example:
+        Example::
 
-        ```python
-        >>> from transformers import T5Tokenizer, T5EncoderModel
-        >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        >>> model = T5EncoderModel.from_pretrained('t5-small')
-        >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
-        >>> outputs = model(input_ids=input_ids)
-        >>> last_hidden_states = outputs.last_hidden_state
-        ```"""
+            >>> from transformers import T5Tokenizer, T5EncoderModel
+            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
+            >>> model = T5EncoderModel.from_pretrained('t5-small')
+            >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
+            >>> outputs = model(input_ids=input_ids)
+            >>> last_hidden_states = outputs.last_hidden_state
+        """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         encoder_outputs = self.encoder(

@@ -446,8 +446,8 @@ class Options:
 
         logger.info(message)
 
-    def parse(self):
-        opt = self.parser.parse_args()
+    def parse(self, args=None):
+        opt = self.parser.parse_args(args)
         if opt.closed_book:  # override flags to enable closed book mode
             opt.n_context = 1
             opt.retriever_n_context = 1

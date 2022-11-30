@@ -50,6 +50,7 @@ class Atlas(nn.Module):
         self.opt = opt
 
         self.READER_ALL_TOKENS = list(self.reader_tokenizer.vocab.values())
+        logger.info("Atlas Init")
 
     def _get_fp16_retriever_copy(self):
         if hasattr(self.retriever, "module"):
@@ -62,7 +63,6 @@ class Atlas(nn.Module):
     def build_index(self, index, passages, gpu_embedder_batch_size, logger=None):
         n_batch = math.ceil(len(passages) / gpu_embedder_batch_size)
         retrieverfp16 = self._get_fp16_retriever_copy()
-
         total = 0
         for i in range(n_batch):
             batch = passages[i * gpu_embedder_batch_size : (i + 1) * gpu_embedder_batch_size]
@@ -78,7 +78,7 @@ class Atlas(nn.Module):
             embeddings = retrieverfp16(**_to_cuda(batch_enc), is_passages=True)
             index.embeddings[:, total : total + len(embeddings)] = embeddings.T
             total += len(embeddings)
-            if i % 500 == 0 and i > 0:
+            if i % 10 == 0 and i > 0:
                 logger.info(f"Number of passages encoded: {total}")
         dist_utils.barrier()
         logger.info(f"{total} passages encoded on process: {dist_utils.get_rank()}")
@@ -143,7 +143,6 @@ class Atlas(nn.Module):
             filtering_fun,
             iter_stats,
         )
-
         retrieverfp16 = self._get_fp16_retriever_copy()
         fstr = self.opt.retriever_format
         flat_passage_strings = [fstr.format(**p) for ps in passages for p in ps]
@@ -153,7 +152,6 @@ class Atlas(nn.Module):
             [],
             [],
         )
-
         for b in range(0, len(flat_passage_strings), encoder_batch_size):
             batch = flat_passage_strings[b : b + encoder_batch_size]
             batch_enc = self.retriever_tokenizer(
@@ -166,7 +164,7 @@ class Atlas(nn.Module):
             batch_emb = retrieverfp16(**_to_cuda(batch_enc), is_passages=True).to(query_emb)
             passage_emb[b : b + encoder_batch_size] = batch_emb
 
-        passage_emb = passage_emb.view(bsz, to_rerank, -1)
+        passage_emb = passage_emb.view(bsz, to_rerank * self.opt.filtering_overretrieve_ratio, -1)
         retriever_scores = torch.einsum("id, ijd->ij", [query_emb, passage_emb])
         top_retriever_scores, top_retriever_inds = torch.topk(retriever_scores, topk, dim=1)
 
@@ -182,6 +180,7 @@ class Atlas(nn.Module):
         return passages, scores
 
     def append_query(self, query, passages):
+        # logger.info(f"Appending query to passages: {self.opt.encoder_format.format(query=query, **passages[0])}")
         return [self.opt.encoder_format.format(query=query, **p) for p in passages]
 
     def retriever_tokenize(self, query):

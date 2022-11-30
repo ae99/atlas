@@ -122,6 +122,9 @@ python preprocessing/prepare_qa.py --output_directory ${DATA_DIR}
 python preprocessing/download_corpus.py --corpus corpora/wiki/enwiki-dec2018 --output_directory ${DATA_DIR} 
 # downloads pretrained Atlas-large
 python preprocessing/download_model.py --model models/atlas/${SIZE} --output_directory ${DATA_DIR}  
+# download index?
+python preprocessing/download_index.py --index indices/atlas_nq/wiki/${SIZE} --output_directory ${DATA_DIR}
+
 
 port=$(shuf -i 15000-16000 -n 1)
 TRAIN_FILE="${DATA_DIR}/data/nq_data/train.64-shot.jsonl"

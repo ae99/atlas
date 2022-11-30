@@ -31,7 +31,7 @@ def _get_eval_data_iterator(opt, data_path, task):
         dist.all_reduce(len_data, torch.distributed.ReduceOp.MAX)
         if len(data_iterator) < len_data.item():
             data_iterator.extend([{} for _ in range(len_data.item() - len(data_iterator))])
-    dist.barrier()
+    # dist.barrier()
     return data_iterator
 
 

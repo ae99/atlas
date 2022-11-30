@@ -36,6 +36,7 @@ def train(
     step,
     opt,
     checkpoint_path,
+    logger,
 ):
     tb_logger = util.init_tb_logger(os.path.join(opt.checkpoint_dir, opt.name), is_main=opt.is_main)
     run_stats = util.WeightedAvgStats()

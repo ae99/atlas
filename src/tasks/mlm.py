@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import random
-
+random.seed(42)
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from src.evaluation import exact_match_score, f1_score, rouge_score

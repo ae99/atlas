@@ -36,6 +36,7 @@ def encode_passages(batch, tokenizer, max_length):
         truncation=True,
     )
     tokens = {k: v.view(bsz, n, -1) for k, v in tokens.items()}
+    
     return tokens
 
 

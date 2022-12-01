@@ -44,10 +44,16 @@ class FiDStack(T5Stack):
         output_hidden_states=None,
         return_dict=None,
     ):
+        # So this function essentially does a normal T5Stack forward pass
+        # But for the encoder will stack the passages, then unstack (i.e. concat) before giving back to the decoder
+ 
         if not self.is_decoder:
+            # goes from (batch_size, seq_len * num_passages) to (batch_size * num_passages, seq_len)
+            # essentially, on incoming all passages are concatenated, and this will stack them
             input_ids = input_ids.view(input_ids.size(0) * self.config.n_context, -1)
             attention_mask = attention_mask.view(attention_mask.size(0) * self.config.n_context, -1)
 
+        # normal T5 forward pass
         output = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -74,6 +80,7 @@ class FiDStack(T5Stack):
             else:
                 last_hidden_state = output.last_hidden_state
                 output.last_hidden_state = last_hidden_state.view(self.config.bsz, -1, last_hidden_state.size(-1))
+                print(return_dict, last_hidden_state.size(), output.last_hidden_state.size())
 
         return output
 
@@ -89,6 +96,7 @@ class FiD(T5ForConditionalGeneration):
     ]
 
     def __init__(self, config):
+        # identical to T5ForConditionalGeneration __init__, except uses FiDStack instead
         super().__init__(config)
         self.model_dim = config.d_model
 
